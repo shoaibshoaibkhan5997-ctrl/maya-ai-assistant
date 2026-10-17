@@ -10,11 +10,29 @@ import org.json.JSONObject
 object CommandParser {
     const val MAX_APP_NAME = 60
     const val MAX_TEXT = 500
+    private const val MAX_NOTE = 200
+
+    private fun clean(raw: String) = raw.trim()
+        .removePrefix("```json").removePrefix("```")
+        .removeSuffix("```").trim()
+
+    /**
+     * Parts of the user's request that the app cannot do (e.g. "search", "play video").
+     * Empty when everything asked for is supported.
+     */
+    fun unsupportedNote(raw: String): String {
+        return try {
+            val obj = JSONObject(clean(raw))
+            if (obj.isNull("unsupported")) return ""
+            val note = obj.optString("unsupported", "").trim().take(MAX_NOTE)
+            if (note.lowercase() in setOf("none", "null", "n/a", "na", "-")) "" else note
+        } catch (e: JSONException) {
+            ""
+        }
+    }
 
     fun parse(raw: String): AssistantCommand {
-        val cleaned = raw.trim()
-            .removePrefix("```json").removePrefix("```")
-            .removeSuffix("```").trim()
+        val cleaned = clean(raw)
         if (cleaned.isEmpty()) return AssistantCommand.Invalid("Khaali jawab mila.")
 
         val obj = try {
