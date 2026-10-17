@@ -5,6 +5,7 @@ import com.maya.ai.data.GeminiRepository
 import com.maya.ai.data.PreferencesRepository
 import com.maya.ai.security.ApiKeyManager
 import com.maya.ai.service.MayaAccessibilityService
+import com.maya.ai.speech.ElevenLabsVoice
 import com.maya.ai.speech.TextToSpeechManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,17 +14,21 @@ import kotlinx.coroutines.launch
 
 class MayaApp : Application() {
     lateinit var keys: ApiKeyManager; private set
+    lateinit var elevenKeys: ApiKeyManager; private set
     lateinit var prefs: PreferencesRepository; private set
     lateinit var gemini: GeminiRepository; private set
     lateinit var tts: TextToSpeechManager; private set
+    lateinit var cloudVoice: ElevenLabsVoice; private set
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate() {
         super.onCreate()
-        keys = ApiKeyManager(this)
+        keys = ApiKeyManager(this, "gemini")
+        elevenKeys = ApiKeyManager(this, "elevenlabs")
         prefs = PreferencesRepository(this)
         gemini = GeminiRepository(keys, prefs)
         tts = TextToSpeechManager(this)
+        cloudVoice = ElevenLabsVoice(this, elevenKeys)
 
         // The service honours the in-app switch.
         appScope.launch {
@@ -49,7 +54,9 @@ class MayaApp : Application() {
     fun clearAllData() {
         disableScreenControl()
         tts.stop()
+        cloudVoice.stop()
         keys.clear()
+        elevenKeys.clear()
         appScope.launch { prefs.clearAll() }
     }
 }
