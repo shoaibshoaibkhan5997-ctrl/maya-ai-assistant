@@ -18,6 +18,7 @@ import com.maya.ai.service.MayaAccessibilityService
 import com.maya.ai.speech.SpeechRecognitionManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.concurrent.CancellationException
@@ -31,9 +32,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val container = app as MayaApp
     private val gemini = container.gemini
     val tts = container.tts
+    val cloud = container.cloudVoice
     val speech = SpeechRecognitionManager(app)
     val apiConfigured = container.keys.configured
     val settings = container.prefs.settings.stateIn(viewModelScope, SharingStarted.Eagerly, MayaSettings())
+
+    /** True while either the phone voice or the ElevenLabs voice is speaking. */
+    val speaking = combine(tts.speaking, cloud.speaking) { a, b -> a || b }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     val messages = mutableStateListOf<ChatMessage>()
     var input by mutableStateOf("")
@@ -58,7 +64,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         speech.clearError()
-        tts.stop()
+        stopSpeaking()
         pendingType = null
         messages.add(ChatMessage(Role.USER, text))
         input = ""
@@ -142,14 +148,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun speak(text: String) {
         val s = settings.value
-        tts.speak(text, s.speechRate, s.volume, s.voiceName)
+        // ElevenLabs only when switched ON and a key exists; otherwise the phone's own voice.
+        if (s.useElevenLabs && container.elevenKeys.configured.value) {
+            tts.stop()
+            cloud.speak(text, s.elevenVoiceId, s.volume)
+        } else {
+            cloud.stop()
+            tts.speak(text, s.speechRate, s.volume, s.voiceName)
+        }
     }
 
     fun replay() { lastMayaText?.let(::speak) }
-    fun stopSpeaking() = tts.stop()
+    fun stopSpeaking() { tts.stop(); cloud.stop() }
 
     fun startListening() {
-        tts.stop()
+        stopSpeaking()
         speech.start(settings.value.inputLang)
     }
     fun stopListening() = speech.stop()
@@ -157,7 +170,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearChat() {
         job?.cancel()
-        tts.stop()
+        stopSpeaking()
         messages.clear()
         pendingType = null
         lastMayaText = null
