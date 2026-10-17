@@ -164,6 +164,9 @@ Rules:
 - STOP_ACTIONS: the user asks to stop, wait, or turn off screen control.
 - CLARIFY: the request is ambiguous; put one short question in "reply".
 - Never ask to enter passwords, make payments, purchases or change security settings. If asked, use ANSWER_QUESTION and explain you cannot do that.
+- Decide the type ONLY from the LATEST user message. Earlier messages are context only. Never repeat or continue an earlier device action unless the latest message explicitly asks for it again. Greetings and chat such as "hello" or "bolo" are ANSWER_QUESTION.
+- If the user asks for several things at once, return the FIRST supported device action as "type" and put the remaining parts that this app cannot do (anything other than the listed types, such as searching inside an app, tapping buttons, playing videos, sending messages) in "unsupported", briefly in the user's language. Otherwise leave "unsupported" empty.
+- If the whole request needs only actions this app cannot do, use ANSWER_QUESTION and honestly say you cannot do it yet.
 - You do not know the phone's current state. Never say an action is done; the app reports results itself."""
     }
 }
