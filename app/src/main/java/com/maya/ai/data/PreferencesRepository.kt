@@ -20,9 +20,12 @@ data class MayaSettings(
     val voiceName: String? = null,
     val inputLang: String = "hi-IN",
     val screenControlEnabled: Boolean = false, // OFF by default
+    val useElevenLabs: Boolean = false,
+    val elevenVoiceId: String = DEFAULT_ELEVEN_VOICE,
 ) {
     companion object {
         const val DEFAULT_MODEL = "gemini-2.5-flash"
+        const val DEFAULT_ELEVEN_VOICE = "CNKl99QEbWm8RQ4D8GfC"
     }
 }
 
@@ -37,6 +40,8 @@ class PreferencesRepository(context: Context) {
         val VOICE = stringPreferencesKey("voice_name")
         val LANG = stringPreferencesKey("input_lang")
         val SCREEN = booleanPreferencesKey("screen_control")
+        val USE_ELEVEN = booleanPreferencesKey("use_elevenlabs")
+        val ELEVEN_VOICE = stringPreferencesKey("eleven_voice_id")
     }
 
     val settings: Flow<MayaSettings> = store.data
@@ -50,6 +55,8 @@ class PreferencesRepository(context: Context) {
                 voiceName = p[K.VOICE],
                 inputLang = p[K.LANG] ?: "hi-IN",
                 screenControlEnabled = p[K.SCREEN] ?: false,
+                useElevenLabs = p[K.USE_ELEVEN] ?: false,
+                elevenVoiceId = p[K.ELEVEN_VOICE] ?: MayaSettings.DEFAULT_ELEVEN_VOICE,
             )
         }
 
@@ -59,6 +66,8 @@ class PreferencesRepository(context: Context) {
     suspend fun setVolume(v: Float) = store.edit { it[K.VOLUME] = v }
     suspend fun setInputLang(v: String) = store.edit { it[K.LANG] = v }
     suspend fun setScreenControl(v: Boolean) = store.edit { it[K.SCREEN] = v }
+    suspend fun setUseElevenLabs(v: Boolean) = store.edit { it[K.USE_ELEVEN] = v }
+    suspend fun setElevenVoiceId(v: String) = store.edit { it[K.ELEVEN_VOICE] = v }
     suspend fun setVoiceName(v: String?) = store.edit {
         if (v == null) it.remove(K.VOICE) else it[K.VOICE] = v
     }
