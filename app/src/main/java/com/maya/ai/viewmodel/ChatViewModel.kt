@@ -71,8 +71,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         loading = true
         job = viewModelScope.launch {
             try {
-                val raw = gemini.interpret(buildHistory())
-                handle(CommandParser.parse(raw))
+                                val raw = gemini.interpret(buildHistory())
+                val cmd = CommandParser.parse(raw)
+                handle(cmd)
+                val extra = CommandParser.unsupportedNote(raw)
+                if (cmd.isDeviceAction && extra.isNotEmpty()) {
+                    messages.add(ChatMessage(Role.STATUS, "Baaki hissa abhi supported nahi hai: $extra", ok = false))
+                }
             } catch (e: CancellationException) {
                 messages.add(ChatMessage(Role.STATUS, "Request cancel ki gayi.", ok = false))
                 throw e
