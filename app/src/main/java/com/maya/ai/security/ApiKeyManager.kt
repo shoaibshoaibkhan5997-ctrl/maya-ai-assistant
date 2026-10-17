@@ -13,14 +13,16 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Stores the user's Gemini API key encrypted with an AES-256-GCM key kept in the Android Keystore.
+ * Stores one API key (per [slot]) encrypted with an AES-256-GCM key in the Android Keystore.
  * The plaintext key is never logged and never written to disk.
  */
-class ApiKeyManager(context: Context) {
+class ApiKeyManager(context: Context, slot: String = "gemini") {
+    private val alias = "maya_${slot}_key"
+    private val prefBlob = "${slot}_key_blob"
     private val prefs = context.applicationContext
         .getSharedPreferences("maya_secure", Context.MODE_PRIVATE)
 
-    private val _configured = MutableStateFlow(prefs.contains(PREF_BLOB))
+    private val _configured = MutableStateFlow(prefs.contains(prefBlob))
     val configured: StateFlow<Boolean> = _configured
 
     fun save(apiKey: String) {
@@ -29,12 +31,12 @@ class ApiKeyManager(context: Context) {
         val ct = cipher.doFinal(apiKey.toByteArray(Charsets.UTF_8))
         val blob = Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" +
             Base64.encodeToString(ct, Base64.NO_WRAP)
-        prefs.edit().putString(PREF_BLOB, blob).apply()
+        prefs.edit().putString(prefBlob, blob).apply()
         _configured.value = true
     }
 
     fun get(): String? {
-        val blob = prefs.getString(PREF_BLOB, null) ?: return null
+        val blob = prefs.getString(prefBlob, null) ?: return null
         return try {
             val (ivB64, ctB64) = blob.split(":")
             val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -44,16 +46,15 @@ class ApiKeyManager(context: Context) {
             )
             String(cipher.doFinal(Base64.decode(ctB64, Base64.NO_WRAP)), Charsets.UTF_8)
         } catch (e: Exception) {
-            // Key invalidated or data corrupt: treat as not configured.
             clear()
             null
         }
     }
 
     fun clear() {
-        prefs.edit().remove(PREF_BLOB).apply()
+        prefs.edit().remove(prefBlob).apply()
         try {
-            KeyStore.getInstance(KEYSTORE).apply { load(null) }.deleteEntry(ALIAS)
+            KeyStore.getInstance(KEYSTORE).apply { load(null) }.deleteEntry(alias)
         } catch (_: Exception) {
         }
         _configured.value = false
@@ -61,11 +62,11 @@ class ApiKeyManager(context: Context) {
 
     private fun secretKey(): SecretKey {
         val ks = KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
+        (ks.getKey(alias, null) as? SecretKey)?.let { return it }
         val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
         gen.init(
             KeyGenParameterSpec.Builder(
-                ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
             )
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
@@ -77,8 +78,6 @@ class ApiKeyManager(context: Context) {
 
     private companion object {
         const val KEYSTORE = "AndroidKeyStore"
-        const val ALIAS = "maya_gemini_key"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
-        const val PREF_BLOB = "gemini_key_blob"
     }
 }
