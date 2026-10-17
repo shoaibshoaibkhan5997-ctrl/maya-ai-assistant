@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">MAYA AI</string>
+    <string name="accessibility_label">MAYA Screen Control</string>
+    <string name="accessibility_description">Lets MAYA perform actions you ask for: open apps, go back, scroll and type text into a focused field. It does nothing unless you turn Screen Control ON inside MAYA and give a command. It does not read or send screen contents.</string>
+</resources>
