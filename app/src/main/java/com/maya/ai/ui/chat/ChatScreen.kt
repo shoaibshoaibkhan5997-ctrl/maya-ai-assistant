@@ -42,7 +42,7 @@ fun ChatScreen(vm: ChatViewModel, onNavigate: (Screen) -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val apiOk by vm.apiConfigured.collectAsStateWithLifecycle()
     val svcOn by MayaAccessibilityService.connected.collectAsStateWithLifecycle()
-    val speaking by vm.tts.speaking.collectAsStateWithLifecycle()
+    val speaking by vm.speaking.collectAsStateWithLifecycle()
     val speechState by vm.speech.state.collectAsStateWithLifecycle()
     val listening = speechState is SpeechRecognitionManager.State.Listening
     val screenOn = svcOn && settings.screenControlEnabled
