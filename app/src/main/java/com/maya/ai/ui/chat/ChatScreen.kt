@@ -47,17 +47,36 @@ fun ChatScreen(vm: ChatViewModel, onNavigate: (Screen) -> Unit) {
     val listening = speechState is SpeechRecognitionManager.State.Listening
     val screenOn = svcOn && settings.screenControlEnabled
     var menuOpen by remember { mutableStateOf(false) }
+    var wantVoiceMode by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) vm.startListening() else vm.onMicDenied()
+        val forVoiceMode = wantVoiceMode
+        wantVoiceMode = false
+        if (granted) {
+            if (forVoiceMode) vm.startVoiceMode() else vm.startListening()
+        } else {
+            vm.onMicDenied()
+        }
     }
+    fun hasMic() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
     fun onMic() {
         when {
+            vm.voiceMode -> vm.stopVoiceMode("Voice Mode band kiya gaya. Mic band hai.")
             listening -> vm.stopListening()
-            ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED ->
-                vm.startListening()
+            hasMic() -> vm.startListening()
             else -> micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    fun onVoiceMode() {
+        when {
+            vm.voiceMode -> vm.stopVoiceMode("Voice Mode band kiya gaya. Mic band hai.")
+            hasMic() -> vm.startVoiceMode()
+            else -> {
+                wantVoiceMode = true
+                micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
         }
     }
 
@@ -100,7 +119,25 @@ fun ChatScreen(vm: ChatViewModel, onNavigate: (Screen) -> Unit) {
                         TextButton(onClick = vm::cancelGeneration) { Text("Cancel") }
                     }
                 }
-                if (listening) {
+                if (vm.voiceMode) {
+                    Card(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                Modifier.size(18.dp), strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Voice Mode ON", style = MaterialTheme.typography.titleSmall)
+                                Text(vm.voiceStatus, fontSize = 13.sp)
+                            }
+                            Button(onClick = { vm.stopVoiceMode("Voice Mode band kiya gaya. Mic band hai.") }) {
+                                Text("STOP")
+                            }
+                        }
+                    }
+                }
+                if (listening && !vm.voiceMode) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp)) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary)
                         Spacer(Modifier.width(8.dp))
@@ -108,15 +145,22 @@ fun ChatScreen(vm: ChatViewModel, onNavigate: (Screen) -> Unit) {
                         TextButton(onClick = vm::stopListening) { Text("Stop") }
                     }
                 }
-                (speechState as? SpeechRecognitionManager.State.Error)?.let {
-                    Text(it.message, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
+                if (!vm.voiceMode) {
+                    (speechState as? SpeechRecognitionManager.State.Error)?.let {
+                        Text(it.message, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
+                    }
                 }
-                if (speaking || vm.lastMayaText != null) {
-                    Row(Modifier.padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (speaking) AssistChip(onClick = vm::stopSpeaking, label = { Text("Stop speaking") },
+                Row(Modifier.padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (speaking) {
+                        AssistChip(onClick = vm::stopSpeaking, label = { Text("Stop speaking") },
                             leadingIcon = { Icon(Icons.Filled.Stop, null) })
-                        else AssistChip(onClick = vm::replay, label = { Text("Replay") },
+                    } else if (vm.lastMayaText != null) {
+                        AssistChip(onClick = vm::replay, label = { Text("Replay") },
                             leadingIcon = { Icon(Icons.Filled.Replay, null) })
+                    }
+                    if (!vm.voiceMode) {
+                        AssistChip(onClick = ::onVoiceMode, label = { Text("Voice Mode") },
+                            leadingIcon = { Icon(Icons.Filled.RecordVoiceOver, null) })
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
