@@ -17,8 +17,8 @@ import com.maya.ai.domain.CommandParser
 import com.maya.ai.service.MayaAccessibilityService
 import com.maya.ai.speech.SpeechRecognitionManager
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.concurrent.CancellationException
@@ -37,17 +37,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val apiConfigured = container.keys.configured
     val settings = container.prefs.settings.stateIn(viewModelScope, SharingStarted.Eagerly, MayaSettings())
 
-    /** True while either the phone voice or the ElevenLabs voice is speaking. */
-    val speaking = combine(tts.speaking, cloud.speaking) { a, b -> a || b }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    /** True while any voice (Gemini, ElevenLabs or the phone's own) is speaking. */
+    val speaking = container.speaking
 
     val messages = mutableStateListOf<ChatMessage>()
     var input by mutableStateOf("")
     var loading by mutableStateOf(false); private set
-    var pendingType by mutableStateOf<AssistantCommand.TypeText?>(null); private set
+    /** Steps waiting for the user's "Haan, chalao". */
+    var pendingPlan by mutableStateOf<List<AssistantCommand>?>(null); private set
+    /** True while a device-action plan is running (shows the STOP button). */
+    var running by mutableStateOf(false); private set
     var lastMayaText by mutableStateOf<String?>(null); private set
 
     private var job: Job? = null
+    private var planJob: Job? = null
 
     init {
         speech.onFinal = { input = it }
@@ -65,13 +68,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         speech.clearError()
         stopSpeaking()
-        pendingType = null
+        pendingPlan = null
         messages.add(ChatMessage(Role.USER, text))
         input = ""
         loading = true
         job = viewModelScope.launch {
             try {
-                                val raw = gemini.interpret(buildHistory())
+                val raw = gemini.interpret(buildHistory())
                 val cmd = CommandParser.parse(raw)
                 handle(cmd)
                 val extra = CommandParser.unsupportedNote(raw)
@@ -92,8 +95,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelGeneration() { job?.cancel() }
 
     private fun buildHistory(): List<ChatTurn> =
-        messages.filter { it.role != Role.STATUS }
-            .map { ChatTurn(fromUser = it.role == Role.USER, text = it.text) }
+        messages.map {
+            when (it.role) {
+                Role.USER -> ChatTurn(fromUser = true, text = it.text)
+                Role.MAYA -> ChatTurn(fromUser = false, text = it.text)
+                Role.STATUS -> ChatTurn(fromUser = false, text = "(Note from app, not a request: ${it.text})")
+            }
+        }
             .takeLast(MAX_HISTORY)
             .dropWhile { !it.fromUser }
 
@@ -104,7 +112,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             is AssistantCommand.Invalid ->
                 messages.add(ChatMessage(Role.STATUS, cmd.reason, ok = false))
             AssistantCommand.StopActions -> {
-                pendingType = null
+                planJob?.cancel()
+                running = false
+                pendingPlan = null
                 container.disableScreenControl()
                 messages.add(ChatMessage(Role.STATUS, "Pending actions cancel kar diye aur Screen Control band kar diya. Agar Android settings mein abhi bhi ON dikhe to wahan se OFF karein."))
             }
@@ -118,31 +128,81 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             messages.add(ChatMessage(Role.STATUS, "Screen Control OFF hai, isliye yeh action nahi chalaya. Menu > Screen Control se ON karein.", ok = false))
             return
         }
-        if (cmd is AssistantCommand.TypeText && cmd.requiresConfirmation) {
-            pendingType = cmd
-            addMaya("Kya main focused text box mein yeh likhoon?\n\n\"${cmd.text}\"")
+        val steps = if (cmd is AssistantCommand.Plan) cmd.steps else listOf(cmd)
+        if (cmd.requiresConfirmation) {
+            pendingPlan = steps
+            addMaya("Main yeh steps chalana chahti hoon. Neeche confirm karein.")
             return
         }
-        execute(cmd)
+        runSteps(steps)
     }
 
     fun confirmPending() {
-        val cmd = pendingType ?: return
-        pendingType = null
-        execute(cmd)
+        val plan = pendingPlan ?: return
+        pendingPlan = null
+        runSteps(plan)
     }
 
     fun cancelPending() {
-        if (pendingType != null) {
-            pendingType = null
-            messages.add(ChatMessage(Role.STATUS, "Action cancel kiya. Kuch nahi likha gaya.", ok = false))
+        if (pendingPlan != null) {
+            pendingPlan = null
+            messages.add(ChatMessage(Role.STATUS, "Cancel kiya. Kuch nahi chalaya gaya.", ok = false))
         }
     }
 
-    private fun execute(cmd: AssistantCommand) {
-        val svc = MayaAccessibilityService.instance
-        val result = svc?.execute(cmd) ?: ActionResult(false, "Accessibility service connected nahi hai.")
-        messages.add(ChatMessage(Role.STATUS, result.message, result.success))
+    fun stopPlan() {
+        if (running) {
+            planJob?.cancel()
+            running = false
+            messages.add(ChatMessage(Role.STATUS, "Aapne plan roka. Aage ke steps nahi chalenge.", ok = false))
+        }
+    }
+
+    private fun runSteps(steps: List<AssistantCommand>) {
+        planJob?.cancel()
+        running = true
+        planJob = viewModelScope.launch {
+            try {
+                for ((i, step) in steps.withIndex()) {
+                    val svc = MayaAccessibilityService.instance
+                    if (svc == null || !MayaAccessibilityService.acceptingCommands) {
+                        messages.add(ChatMessage(Role.STATUS, "Screen Control band ho gaya, plan ruk gaya.", ok = false))
+                        break
+                    }
+                    val result = runWithRetry(svc, step)
+                    val prefix = if (steps.size > 1) "Step ${i + 1}: " else ""
+                    messages.add(ChatMessage(Role.STATUS, prefix + result.message, result.success))
+                    if (!result.success) {
+                        if (steps.size > 1) messages.add(ChatMessage(Role.STATUS, "Plan yahin ruk gaya.", ok = false))
+                        break
+                    }
+                    if (i < steps.lastIndex) delay(settleMs(step))
+                }
+            } finally {
+                running = false
+            }
+        }
+    }
+
+    /** Screens load slowly, so finding a button / search box is retried a few times. */
+    private suspend fun runWithRetry(svc: MayaAccessibilityService, step: AssistantCommand): ActionResult {
+        val retry = step is AssistantCommand.SearchInApp || step is AssistantCommand.TapText ||
+            step is AssistantCommand.TapFirstResult
+        var result = svc.execute(step)
+        var tries = 1
+        while (retry && !result.success && tries < 4) {
+            delay(1000)
+            result = svc.execute(step)
+            tries++
+        }
+        return result
+    }
+
+    private fun settleMs(step: AssistantCommand): Long = when (step) {
+        is AssistantCommand.OpenApp, is AssistantCommand.SearchYoutube -> 3000L
+        is AssistantCommand.SearchInApp -> 2500L
+        is AssistantCommand.TapText, is AssistantCommand.TapFirstResult -> 1500L
+        else -> 800L
     }
 
     private fun addMaya(text: String) {
@@ -151,20 +211,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (settings.value.speakEnabled) speak(text)
     }
 
-    fun speak(text: String) {
-        val s = settings.value
-        // ElevenLabs only when switched ON and a key exists; otherwise the phone's own voice.
-        if (s.useElevenLabs && container.elevenKeys.configured.value) {
-            tts.stop()
-            cloud.speak(text, s.elevenVoiceId, s.volume)
-        } else {
-            cloud.stop()
-            tts.speak(text, s.speechRate, s.volume, s.voiceName)
-        }
-    }
+    fun speak(text: String) = container.speakText(text, settings.value)
 
     fun replay() { lastMayaText?.let(::speak) }
-    fun stopSpeaking() { tts.stop(); cloud.stop() }
+    fun stopSpeaking() = container.stopSpeech()
 
     fun startListening() {
         stopSpeaking()
@@ -175,9 +225,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearChat() {
         job?.cancel()
+        planJob?.cancel()
+        running = false
         stopSpeaking()
         messages.clear()
-        pendingType = null
+        pendingPlan = null
         lastMayaText = null
         loading = false
     }
