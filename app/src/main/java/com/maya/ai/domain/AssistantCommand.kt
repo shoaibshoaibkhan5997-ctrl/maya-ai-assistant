@@ -13,6 +13,7 @@ sealed class AssistantCommand {
     data class AnswerQuestion(val reply: String) : AssistantCommand()
     data class Clarify(val question: String) : AssistantCommand()
     data class OpenApp(val appName: String) : AssistantCommand()
+    data class SearchYoutube(val query: String) : AssistantCommand()
     data class Scroll(val direction: ScrollDirection) : AssistantCommand()
     data object NavigateBack : AssistantCommand()
     data class TypeText(val text: String) : AssistantCommand()
@@ -21,7 +22,8 @@ sealed class AssistantCommand {
 
     /** True for commands that operate the phone through Screen Control. */
     val isDeviceAction: Boolean
-        get() = this is OpenApp || this is Scroll || this is NavigateBack || this is TypeText
+        get() = this is OpenApp || this is SearchYoutube || this is Scroll ||
+            this is NavigateBack || this is TypeText
 
     /** Consequential commands need an explicit user tap before running. */
     val requiresConfirmation: Boolean
