@@ -2,14 +2,20 @@ package com.maya.ai
 
 import android.app.Application
 import com.maya.ai.data.GeminiRepository
+import com.maya.ai.data.MayaSettings
 import com.maya.ai.data.PreferencesRepository
 import com.maya.ai.security.ApiKeyManager
 import com.maya.ai.service.MayaAccessibilityService
 import com.maya.ai.speech.ElevenLabsVoice
+import com.maya.ai.speech.GeminiVoice
 import com.maya.ai.speech.TextToSpeechManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class MayaApp : Application() {
@@ -19,6 +25,8 @@ class MayaApp : Application() {
     lateinit var gemini: GeminiRepository; private set
     lateinit var tts: TextToSpeechManager; private set
     lateinit var cloudVoice: ElevenLabsVoice; private set
+    lateinit var geminiVoice: GeminiVoice; private set
+    lateinit var speaking: StateFlow<Boolean>; private set
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate() {
@@ -29,6 +37,9 @@ class MayaApp : Application() {
         gemini = GeminiRepository(keys, prefs)
         tts = TextToSpeechManager(this)
         cloudVoice = ElevenLabsVoice(this, elevenKeys)
+        geminiVoice = GeminiVoice(this, keys)
+        speaking = combine(tts.speaking, cloudVoice.speaking, geminiVoice.speaking) { a, b, c -> a || b || c }
+            .stateIn(appScope, SharingStarted.Eagerly, false)
 
         // The service honours the in-app switch.
         appScope.launch {
@@ -44,6 +55,28 @@ class MayaApp : Application() {
         }
     }
 
+    /** ElevenLabs if switched ON, else Gemini voice, with the phone's own voice as backup. */
+    fun speakText(text: String, s: MayaSettings) {
+        if (s.useElevenLabs && elevenKeys.configured.value) {
+            tts.stop(); geminiVoice.stop()
+            cloudVoice.speak(text, s.elevenVoiceId, s.volume)
+        } else if (keys.configured.value) {
+            tts.stop(); cloudVoice.stop()
+            geminiVoice.speak(text, s.volume) {
+                tts.speak(text, s.speechRate, s.volume, s.voiceName)
+            }
+        } else {
+            cloudVoice.stop(); geminiVoice.stop()
+            tts.speak(text, s.speechRate, s.volume, s.voiceName)
+        }
+    }
+
+    fun stopSpeech() {
+        tts.stop()
+        cloudVoice.stop()
+        geminiVoice.stop()
+    }
+
     /** Stops accepting commands and asks Android to disable the service where possible. */
     fun disableScreenControl() {
         MayaAccessibilityService.acceptingCommands = false
@@ -53,8 +86,7 @@ class MayaApp : Application() {
 
     fun clearAllData() {
         disableScreenControl()
-        tts.stop()
-        cloudVoice.stop()
+        stopSpeech()
         keys.clear()
         elevenKeys.clear()
         appScope.launch { prefs.clearAll() }
