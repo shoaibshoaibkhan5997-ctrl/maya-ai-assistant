@@ -58,6 +58,9 @@ class MayaAccessibilityService : AccessibilityService() {
             is AssistantCommand.NavigateBack ->
                 if (performGlobalAction(GLOBAL_ACTION_BACK)) ActionResult(true, "Back action bhej diya gaya.")
                 else ActionResult(false, "Back action Android ne accept nahi kiya.")
+            is AssistantCommand.Call -> MessagingActions.dial(this, cmd.number)
+            is AssistantCommand.WhatsAppMessage -> MessagingActions.whatsApp(this, cmd.number, cmd.text)
+            is AssistantCommand.SmsMessage -> MessagingActions.sms(this, cmd.number, cmd.text)
             is AssistantCommand.TypeText -> typeText(cmd.text)
             else -> ActionResult(false, "Yeh command device action nahi hai.")
         }
