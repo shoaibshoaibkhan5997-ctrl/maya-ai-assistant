@@ -17,6 +17,9 @@ sealed class AssistantCommand {
     data class SearchInApp(val query: String) : AssistantCommand()
     data class TapText(val label: String) : AssistantCommand()
     data object TapFirstResult : AssistantCommand()
+    data class Call(val number: String) : AssistantCommand()
+    data class WhatsAppMessage(val number: String, val text: String) : AssistantCommand()
+    data class SmsMessage(val number: String, val text: String) : AssistantCommand()
     data class Scroll(val direction: ScrollDirection) : AssistantCommand()
     data object NavigateBack : AssistantCommand()
     data class TypeText(val text: String) : AssistantCommand()
@@ -27,13 +30,15 @@ sealed class AssistantCommand {
     /** True for commands that operate the phone through Screen Control. */
     val isDeviceAction: Boolean
         get() = this is OpenApp || this is SearchYoutube || this is SearchInApp ||
-            this is TapText || this is TapFirstResult || this is Scroll ||
+            this is TapText || this is TapFirstResult || this is Call ||
+            this is WhatsAppMessage || this is SmsMessage || this is Scroll ||
             this is NavigateBack || this is TypeText || this is Plan
 
-    /** Tapping and typing need an explicit user tap before running. */
+    /** Tapping, typing, calling and messaging need an explicit user tap before running. */
     val requiresConfirmation: Boolean
         get() = when (this) {
-            is TypeText, is SearchInApp, is TapText, is TapFirstResult -> true
+            is TypeText, is SearchInApp, is TapText, is TapFirstResult,
+            is Call, is WhatsAppMessage, is SmsMessage -> true
             is Plan -> steps.any { it.requiresConfirmation }
             else -> false
         }
@@ -45,6 +50,9 @@ sealed class AssistantCommand {
         is SearchInApp -> "Is app mein search karo: \"$query\""
         is TapText -> "Tap karo: \"$label\""
         is TapFirstResult -> "Pehla result tap karo"
+        is Call -> "Dialer kholo: $number (call aap khud dabayenge)"
+        is WhatsAppMessage -> "WhatsApp chat kholo: $number\nMessage: \"$text\"\n(Send aap khud dabayenge)"
+        is SmsMessage -> "SMS kholo: $number\nMessage: \"$text\"\n(Send aap khud dabayenge)"
         is Scroll -> "Scroll " + if (direction == ScrollDirection.DOWN) "neeche" else "upar"
         is NavigateBack -> "Back jao"
         is TypeText -> "Text likho: \"$text\""
