@@ -45,7 +45,7 @@ class MayaAccessibilityService : AccessibilityService() {
             return ActionResult(false, "Screen Control OFF hai. Action nahi chalaya.")
         }
         return when (cmd) {
-            is AssistantCommand.OpenApp -> openApp(cmd.appName)
+            is AssistantCommand.SearchYoutube -> searchYoutube(cmd.query)
             is AssistantCommand.Scroll -> scroll(cmd.direction)
             AssistantCommand.NavigateBack ->
                 if (performGlobalAction(GLOBAL_ACTION_BACK)) ActionResult(true, "Back action bhej diya gaya.")
