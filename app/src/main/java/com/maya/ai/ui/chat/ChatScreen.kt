@@ -147,15 +147,28 @@ fun ChatScreen(vm: ChatViewModel, onNavigate: (Screen) -> Unit) {
                 StatusPill(if (apiOk) "Gemini key: set" else "Gemini key: missing", apiOk) { onNavigate(Screen.API) }
                 StatusPill(if (screenOn) "Screen Control: ON" else "Screen Control: OFF", screenOn) { onNavigate(Screen.SCREEN_CONTROL) }
             }
-            vm.pendingType?.let {
+            vm.pendingPlan?.let { plan ->
                 Card(Modifier.padding(12.dp).fillMaxWidth()) {
                     Column(Modifier.padding(12.dp)) {
                         Text("Confirmation chahiye", style = MaterialTheme.typography.titleSmall)
-                        Text("Text box mein likhna hai: \"${it.text}\"", Modifier.padding(vertical = 6.dp))
+                        Text(
+                            plan.mapIndexed { i, s -> "${i + 1}. ${s.describe()}" }.joinToString("\n"),
+                            Modifier.padding(vertical = 6.dp),
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = vm::confirmPending) { Text("Haan, likho") }
+                            Button(onClick = vm::confirmPending) { Text("Haan, chalao") }
                             OutlinedButton(onClick = vm::cancelPending) { Text("Cancel") }
                         }
+                    }
+                }
+            }
+            if (vm.running) {
+                Card(Modifier.padding(horizontal = 12.dp, vertical = 4.dp).fillMaxWidth()) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("MAYA phone chala rahi hai...", Modifier.weight(1f))
+                        Button(onClick = vm::stopPlan) { Text("STOP") }
                     }
                 }
             }
