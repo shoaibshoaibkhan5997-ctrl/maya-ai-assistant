@@ -2,6 +2,7 @@ package com.maya.ai.service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
@@ -45,6 +46,7 @@ class MayaAccessibilityService : AccessibilityService() {
             return ActionResult(false, "Screen Control OFF hai. Action nahi chalaya.")
         }
         return when (cmd) {
+            is AssistantCommand.OpenApp -> openApp(cmd.appName)
             is AssistantCommand.SearchYoutube -> searchYoutube(cmd.query)
             is AssistantCommand.Scroll -> scroll(cmd.direction)
             AssistantCommand.NavigateBack ->
@@ -70,6 +72,23 @@ class MayaAccessibilityService : AccessibilityService() {
         val intent = pm.getLaunchIntentForPackage(match.activityInfo.packageName)
             ?: return ActionResult(false, "\"$name\" ko launch nahi kar sakte.")
         return launch(intent, match.loadLabel(pm).toString())
+    }
+
+    /** Opens the YouTube search results page. It cannot play a video; the user picks one. */
+    private fun searchYoutube(query: String): ActionResult {
+        val uri = Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query))
+        val base = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(Intent(base).setPackage("com.google.android.youtube"))
+            ActionResult(true, "YouTube par \"$query\" ka search kholne ka request bhej diya gaya. Video aap khud chunein.")
+        } catch (e: Exception) {
+            try {
+                startActivity(base)
+                ActionResult(true, "\"$query\" ka YouTube search browser mein kholne ka request bhej diya gaya.")
+            } catch (e2: Exception) {
+                ActionResult(false, "YouTube search nahi khul paya.")
+            }
+        }
     }
 
     private fun launch(intent: Intent, label: String): ActionResult = try {
