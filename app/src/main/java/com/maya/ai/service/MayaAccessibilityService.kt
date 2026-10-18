@@ -125,21 +125,41 @@ class MayaAccessibilityService : AccessibilityService() {
         return clickNode(node, label, checkLabel = true)
     }
 
+    /**
+     * Taps the first big clickable row below the search bar. The list does not have to be
+     * scrollable: short result lists (e.g. 1-2 contacts) fit on screen and are not marked scrollable.
+     */
     private fun tapFirstResult(): ActionResult {
         val root = rootInActiveWindow ?: return noScreen()
         if (blockedScreen(root)) return blockedResult()
-        val lists = collect(root) { it.isScrollable && it.isVisibleToUser }
-        val container = lists.maxByOrNull { area(it) }
-            ?: return ActionResult(false, "Screen par result ki list nahi mili.")
+
         val dm = resources.displayMetrics
-        val minH = dm.heightPixels / 10
+        val container = collect(root) { it.isScrollable && it.isVisibleToUser }
+            .maxByOrNull { area(it) } ?: root
+
+        // Everything above the search box / toolbar is ignored.
+        val editable = dfsFirst(root) { it.isEditable && it.isVisibleToUser }
+        val headerBottom = if (editable != null) {
+            val r = Rect()
+            editable.getBoundsInScreen(r)
+            r.bottom
+        } else {
+            (dm.heightPixels * 0.12).toInt()
+        }
+        val minH = dm.heightPixels / 20
         val minW = dm.widthPixels / 2
-        val item = dfsFirst(container) { n ->
+
+        val candidates = collect(container) { n ->
             val r = Rect()
             n.getBoundsInScreen(r)
             !n.isScrollable && n.isClickable && n.isEnabled && n.isVisibleToUser && !n.isEditable &&
-                r.height() >= minH && r.width() >= minW && !AD_LABEL.containsMatchIn(labelOf(n))
-        } ?: return ActionResult(false, "List mein tap karne layak pehla result nahi mila.")
+                r.top >= headerBottom - 8 && r.height() >= minH && r.width() >= minW &&
+                !AD_LABEL.containsMatchIn(labelOf(n))
+        }
+        val item = candidates.minWithOrNull(
+            compareBy<AccessibilityNodeInfo> { n -> Rect().also { n.getBoundsInScreen(it) }.top }
+                .thenBy { n -> Rect().also { n.getBoundsInScreen(it) }.left }
+        ) ?: return ActionResult(false, "Screen par tap karne layak pehla result nahi mila.")
         return clickNode(item, "pehla result", checkLabel = false)
     }
 
