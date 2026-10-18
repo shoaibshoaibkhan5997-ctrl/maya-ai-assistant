@@ -83,6 +83,14 @@ class SpeechRecognitionManager(private val context: Context) {
         recognizer?.stopListening()
     }
 
+    /** Stops immediately, delivers nothing and releases the microphone. */
+    fun cancel() {
+        try { recognizer?.cancel() } catch (_: Exception) { }
+        destroy()
+        _partial.value = ""
+        _state.value = State.Idle
+    }
+
     fun reportPermissionDenied() {
         _state.value = State.Error(
             "Microphone permission nahi mili. Voice input ke liye Android Settings > Apps > MAYA AI > Permissions mein Microphone allow karein. Aap text type karke bhi use kar sakte hain."
