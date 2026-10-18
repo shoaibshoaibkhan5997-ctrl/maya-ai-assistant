@@ -10,6 +10,7 @@ import org.json.JSONObject
 object CommandParser {
     const val MAX_APP_NAME = 60
     const val MAX_TEXT = 500
+    const val MAX_QUERY = 100
     private const val MAX_NOTE = 200
 
     private fun clean(raw: String) = raw.trim()
@@ -17,7 +18,7 @@ object CommandParser {
         .removeSuffix("```").trim()
 
     /**
-     * Parts of the user's request that the app cannot do (e.g. "search", "play video").
+     * Parts of the user's request that the app cannot do (e.g. "play video").
      * Empty when everything asked for is supported.
      */
     fun unsupportedNote(raw: String): String {
@@ -59,6 +60,13 @@ object CommandParser {
                 if (app.isEmpty() || app.length > MAX_APP_NAME || app.any { it.isISOControl() })
                     AssistantCommand.Invalid("App ka naam samajh nahi aaya.")
                 else AssistantCommand.OpenApp(app)
+            }
+
+            "SEARCH_YOUTUBE" -> {
+                val q = str("query")
+                if (q.isEmpty() || q.length > MAX_QUERY || q.any { it.isISOControl() })
+                    AssistantCommand.Invalid("Search ke liye text samajh nahi aaya.")
+                else AssistantCommand.SearchYoutube(q)
             }
 
             "SCROLL" -> when (str("direction").uppercase()) {
