@@ -49,4 +49,10 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStop() {
+        // Screen rotation also stops the activity; only a real move to the background ends Voice Mode.
+        if (!isChangingConfigurations) chatVm.onAppBackground()
+        super.onStop()
+    }
 }
