@@ -49,15 +49,111 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var running by mutableStateOf(false); private set
     var lastMayaText by mutableStateOf<String?>(null); private set
 
+    /** Continuous voice conversation: listen -> process -> respond -> listen again. */
+    var voiceMode by mutableStateOf(false); private set
+    var voiceStatus by mutableStateOf(""); private set
+
     private var job: Job? = null
     private var planJob: Job? = null
+    private var voiceJob: Job? = null
 
     init {
-        speech.onFinal = { input = it }
+        speech.onFinal = { text ->
+            input = text
+            if (voiceMode) send()   // in Voice Mode the heard sentence is sent automatically
+        }
         viewModelScope.launch {
             speech.partial.collect { if (it.isNotEmpty() && speech.state.value is SpeechRecognitionManager.State.Listening) input = it }
         }
     }
+
+    // ---------- continuous voice mode ----------
+
+    fun startVoiceMode() {
+        if (voiceMode) return                       // never two sessions / two microphones
+        if (!container.keys.configured.value) {
+            messages.add(ChatMessage(Role.STATUS, "Gemini API key set nahi hai. Menu > Gemini API mein key daalein.", ok = false))
+            return
+        }
+        voiceMode = true
+        stopSpeaking()
+        speech.cancel()
+        speech.clearError()
+        voiceJob = viewModelScope.launch { runVoiceLoop() }
+    }
+
+    /** Ends the session and releases the microphone and audio. */
+    fun stopVoiceMode(note: String? = null, ok: Boolean = true) {
+        if (!voiceMode) return
+        voiceMode = false
+        voiceJob?.cancel()
+        voiceJob = null
+        speech.cancel()
+        stopSpeaking()
+        if (loading) cancelGeneration()
+        voiceStatus = ""
+        if (note != null) messages.add(ChatMessage(Role.STATUS, note, ok))
+    }
+
+    /** Android does not allow a background app to keep the microphone, so the session ends. */
+    fun onAppBackground() {
+        if (voiceMode) {
+            stopVoiceMode("App background mein gaya, isliye Voice Mode aur mic band kar diye gaye. Dobara shuru karne ke liye Voice Mode dabayein.", ok = false)
+        }
+    }
+
+    private suspend fun runVoiceLoop() {
+        var failedRounds = 0
+        while (voiceMode) {
+            if (!waitUntilIdle()) return
+
+            voiceStatus = "Sun rahi hoon... boliye"
+            speech.start(settings.value.inputLang)
+
+            var waited = 0
+            while (voiceMode && speech.state.value is SpeechRecognitionManager.State.Listening) {
+                delay(100)
+                waited += 100
+                if (waited == MAX_LISTEN_MS) speech.stop()
+                if (waited > MAX_LISTEN_MS + 5_000) { speech.cancel(); break }
+            }
+            if (!voiceMode) return
+
+            val st = speech.state.value
+            if (st is SpeechRecognitionManager.State.Error) {
+                failedRounds++
+                if (failedRounds >= MAX_FAILED_ROUNDS) {
+                    stopVoiceMode("Voice Mode band kiya gaya (mic band): ${st.message}", ok = false)
+                    return
+                }
+                delay(500)
+            } else {
+                failedRounds = 0
+            }
+        }
+    }
+
+    /** Waits until MAYA is done thinking/speaking/acting, so the mic never hears MAYA herself. */
+    private suspend fun waitUntilIdle(): Boolean {
+        var quietMs = 0
+        while (voiceMode) {
+            val talking = speaking.value
+            val busy = loading || running || pendingPlan != null
+            voiceStatus = when {
+                loading -> "MAYA soch rahi hai..."
+                talking -> "MAYA bol rahi hai..."
+                running -> "MAYA phone chala rahi hai..."
+                pendingPlan != null -> "Neeche confirm karein..."
+                else -> "Taiyaar..."
+            }
+            if (busy || talking) quietMs = 0 else quietMs += 100
+            if (quietMs >= QUIET_MS) return true
+            delay(100)
+        }
+        return false
+    }
+
+    // ---------- chat ----------
 
     fun send() {
         val text = input.trim()
@@ -67,6 +163,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         speech.clearError()
+        if (voiceMode && speech.state.value is SpeechRecognitionManager.State.Listening) speech.cancel()
         stopSpeaking()
         pendingPlan = null
         messages.add(ChatMessage(Role.USER, text))
@@ -187,7 +284,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Screens load slowly, so finding a button / search box is retried a few times. */
     private suspend fun runWithRetry(svc: MayaAccessibilityService, step: AssistantCommand): ActionResult {
         val retry = step is AssistantCommand.SearchInApp || step is AssistantCommand.TapText ||
-            step is AssistantCommand.TapFirstResult
+            step is AssistantCommand.TapFirstResult || step is AssistantCommand.TypeText
         var result = svc.execute(step)
         var tries = 1
         while (retry && !result.success && tries < 4) {
@@ -217,6 +314,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun stopSpeaking() = container.stopSpeech()
 
     fun startListening() {
+        if (voiceMode) return                       // the voice loop already owns the microphone
         stopSpeaking()
         speech.start(settings.value.inputLang)
     }
@@ -235,9 +333,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        voiceMode = false
+        speech.cancel()
         speech.destroy()
         super.onCleared()
     }
 
-    private companion object { const val MAX_HISTORY = 12 }
+    private companion object {
+        const val MAX_HISTORY = 12
+        const val MAX_LISTEN_MS = 60_000
+        const val MAX_FAILED_ROUNDS = 3
+        const val QUIET_MS = 1_000
+    }
 }
