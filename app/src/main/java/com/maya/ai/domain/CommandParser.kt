@@ -19,6 +19,25 @@ object CommandParser {
         .removePrefix("```json").removePrefix("```")
         .removeSuffix("```").trim()
 
+    /**
+     * Turns what the user said into a full international number like +919876543210,
+     * or null if it does not look like a real phone number (this also blocks 100, 112, etc.).
+     */
+    fun normalizeNumber(raw: String): String? {
+        val s = raw.trim().filter { !it.isWhitespace() && it !in "-()." }
+        var intl = s.startsWith("+")
+        var d = s.removePrefix("+")
+        if (d.startsWith("00")) { d = d.drop(2); intl = true }
+        if (d.isEmpty() || !d.all { it.isDigit() }) return null
+        return when {
+            intl && d.length in 10..15 -> "+$d"
+            !intl && d.length == 10 && d[0] in '6'..'9' -> "+91$d"
+            !intl && d.length == 11 && d[0] == '0' && d[1] in '6'..'9' -> "+91" + d.drop(1)
+            !intl && d.length in 11..15 -> "+$d"
+            else -> null
+        }
+    }
+
     /** Parts of the request the app cannot do. Empty when everything asked for is supported. */
     fun unsupportedNote(raw: String): String {
         return try {
@@ -84,6 +103,26 @@ object CommandParser {
 
             "TAP_FIRST_RESULT" -> AssistantCommand.TapFirstResult
 
+            "CALL" -> {
+                val n = normalizeNumber(str("number"))
+                if (n == null) AssistantCommand.Invalid("Number sahi nahi lagta. 10 digit ya country code ke saath poora number batayein.")
+                else AssistantCommand.Call(n)
+            }
+
+            "WHATSAPP_MESSAGE", "SMS_MESSAGE" -> {
+                val n = normalizeNumber(str("number"))
+                val t = str("text")
+                if (n == null) {
+                    AssistantCommand.Invalid("Number sahi nahi lagta. 10 digit ya country code ke saath poora number batayein.")
+                } else if (t.isEmpty() || t.length > MAX_TEXT) {
+                    AssistantCommand.Invalid("Message khaali ya bahut lamba hai.")
+                } else if (str("type").uppercase() == "SMS_MESSAGE") {
+                    AssistantCommand.SmsMessage(n, t)
+                } else {
+                    AssistantCommand.WhatsAppMessage(n, t)
+                }
+            }
+
             "SCROLL" -> when (str("direction").uppercase()) {
                 "UP" -> AssistantCommand.Scroll(ScrollDirection.UP)
                 "DOWN" -> AssistantCommand.Scroll(ScrollDirection.DOWN)
@@ -111,6 +150,11 @@ object CommandParser {
                         val step = parseObject(stepObj, allowPlan = false)
                         if (!step.isDeviceAction) {
                             return AssistantCommand.Invalid("Step ${i + 1} supported nahi hai.")
+                        }
+                        if (step is AssistantCommand.Call || step is AssistantCommand.WhatsAppMessage ||
+                            step is AssistantCommand.SmsMessage
+                        ) {
+                            return AssistantCommand.Invalid("Call ya message ko dusre steps ke saath nahi chala sakte.")
                         }
                         steps.add(step)
                     }
