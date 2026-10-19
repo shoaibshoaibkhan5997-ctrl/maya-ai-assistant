@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import com.maya.ai.overlay.FloatingBubbleService
 import com.maya.ai.ui.Screen
 import com.maya.ai.ui.chat.ChatScreen
 import com.maya.ai.ui.floating.FloatingBubbleScreen
@@ -59,7 +60,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // While the MAYA screen is visible the app owns the microphone, so the bubble's mic stops.
+        FloatingBubbleService.appVisible = true
+        FloatingBubbleService.stopListening(this)
+    }
+
     override fun onStop() {
+        FloatingBubbleService.appVisible = false
         // Screen rotation also stops the activity; only a real move to the background ends Voice Mode.
         if (!isChangingConfigurations) chatVm.onAppBackground()
         super.onStop()
