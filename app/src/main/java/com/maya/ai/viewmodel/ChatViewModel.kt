@@ -15,6 +15,7 @@ import com.maya.ai.domain.AssistantCommand
 import com.maya.ai.domain.ChatTurn
 import com.maya.ai.domain.CommandParser
 import com.maya.ai.launcher.AppLauncher
+import com.maya.ai.overlay.BubbleChatBus
 import com.maya.ai.service.MayaAccessibilityService
 import com.maya.ai.speech.SpeechRecognitionManager
 import kotlinx.coroutines.Job
