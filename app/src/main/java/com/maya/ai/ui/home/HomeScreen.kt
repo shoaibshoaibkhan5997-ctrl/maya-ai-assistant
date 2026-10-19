@@ -1,5 +1,3 @@
-package com.maya.ai.ui.home
-
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -7,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat          // ← yeh line add ki
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
