@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import com.maya.ai.ui.Screen
 import com.maya.ai.ui.chat.ChatScreen
 import com.maya.ai.ui.floating.FloatingBubbleScreen
+import com.maya.ai.ui.home.HomeScreen
 import com.maya.ai.ui.screencontrol.ScreenControlScreen
 import com.maya.ai.ui.settings.AboutScreen
 import com.maya.ai.ui.settings.ApiSettingsScreen
@@ -36,11 +37,17 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             MayaTheme {
-                var screen by rememberSaveable { mutableStateOf(Screen.CHAT) }
-                BackHandler(enabled = screen != Screen.CHAT) { screen = Screen.CHAT }
-                val back = { screen = Screen.CHAT }
+                var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
+                var origin by rememberSaveable { mutableStateOf(Screen.HOME) }
+                val go: (Screen) -> Unit = { target -> origin = screen; screen = target }
+                val back: () -> Unit = {
+                    screen = if (screen == Screen.CHAT || origin == screen) Screen.HOME else origin
+                    origin = Screen.HOME
+                }
+                BackHandler(enabled = screen != Screen.HOME) { back() }
                 when (screen) {
-                    Screen.CHAT -> ChatScreen(chatVm) { screen = it }
+                    Screen.HOME -> HomeScreen(chatVm, go)
+                    Screen.CHAT -> ChatScreen(chatVm) { go(it) }
                     Screen.VOICE -> VoiceSettingsScreen(settingsVm, back)
                     Screen.API -> ApiSettingsScreen(settingsVm, back)
                     Screen.SCREEN_CONTROL -> ScreenControlScreen(settingsVm, back)
