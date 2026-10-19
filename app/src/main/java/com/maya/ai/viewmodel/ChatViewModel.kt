@@ -60,6 +60,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var voiceJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            BubbleChatBus.events.collect { e ->
+                val role = when (e.kind) {
+                    BubbleChatBus.Kind.USER -> Role.USER
+                    BubbleChatBus.Kind.MAYA -> Role.MAYA
+                    BubbleChatBus.Kind.STATUS -> Role.STATUS
+                }
+                messages.add(ChatMessage(role, e.text, e.ok))
+                if (e.kind == BubbleChatBus.Kind.MAYA) lastMayaText = e.text
+            }
+        }
         speech.onFinal = { text ->
             input = text
             if (voiceMode) send()   // in Voice Mode the heard sentence is sent automatically
@@ -344,6 +355,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         running = false
         stopSpeaking()
         messages.clear()
+        BubbleChatBus.clear()
         pendingPlan = null
         lastMayaText = null
         loading = false
