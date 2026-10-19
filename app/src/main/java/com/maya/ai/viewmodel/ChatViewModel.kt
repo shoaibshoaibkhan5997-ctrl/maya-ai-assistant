@@ -14,6 +14,7 @@ import com.maya.ai.domain.ActionResult
 import com.maya.ai.domain.AssistantCommand
 import com.maya.ai.domain.ChatTurn
 import com.maya.ai.domain.CommandParser
+import com.maya.ai.launcher.AppLauncher
 import com.maya.ai.service.MayaAccessibilityService
 import com.maya.ai.speech.SpeechRecognitionManager
 import kotlinx.coroutines.Job
@@ -158,6 +159,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun send() {
         val text = input.trim()
         if (text.isEmpty() || loading) return
+
+        // Plain "open <app>" commands (YouTube, WhatsApp, Instagram, Chrome, Settings...) are
+        // handled right here on the phone. Anything more complex still goes to Gemini below.
+        val launched = AppLauncher.handle(container, text)
+        if (launched != null) {
+            speech.clearError()
+            stopSpeaking()
+            pendingPlan = null
+            messages.add(ChatMessage(Role.USER, text))
+            input = ""
+            messages.add(ChatMessage(Role.STATUS, launched.message, launched.success))
+            if (!launched.success && settings.value.speakEnabled) speak(launched.message)
+            return
+        }
+
         if (!container.keys.configured.value) {
             messages.add(ChatMessage(Role.STATUS, "Gemini API key set nahi hai. Menu > Gemini API mein key daalein.", ok = false))
             return
