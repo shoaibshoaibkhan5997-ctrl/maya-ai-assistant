@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.maya.ai.overlay.BubbleVoiceState
 import com.maya.ai.overlay.FloatingBubbleService
 import com.maya.ai.ui.settings.SettingsScaffold
 
@@ -35,13 +36,16 @@ import com.maya.ai.ui.settings.SettingsScaffold
 fun FloatingBubbleScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val running by FloatingBubbleService.running.collectAsStateWithLifecycle()
+    val voice by FloatingBubbleService.voiceState.collectAsStateWithLifecycle()
     var granted by remember { mutableStateOf(Settings.canDrawOverlays(ctx)) }
+    var micGranted by remember { mutableStateOf(hasPermission(ctx, Manifest.permission.RECORD_AUDIO)) }
     var explain by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
 
     // Coming back from Android Settings: re-check the real permission state.
     LifecycleResumeEffect(Unit) {
         granted = Settings.canDrawOverlays(ctx)
+        micGranted = hasPermission(ctx, Manifest.permission.RECORD_AUDIO)
         onPauseOrDispose { }
     }
 
@@ -54,8 +58,10 @@ fun FloatingBubbleScreen(onBack: () -> Unit) {
         }
     }
 
-    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        startBubble()   // bubble works even if the notification is hidden by the user
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        micGranted = hasPermission(ctx, Manifest.permission.RECORD_AUDIO)
+        // The bubble works even if the mic or notification permission was refused.
+        startBubble()
     }
 
     fun enable() {
@@ -63,9 +69,13 @@ fun FloatingBubbleScreen(onBack: () -> Unit) {
             explain = true
             return
         }
-        val needsNotifPermission = Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        if (needsNotifPermission) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) else startBubble()
+        val needed = buildList {
+            if (!hasPermission(ctx, Manifest.permission.RECORD_AUDIO)) add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= 33 && !hasPermission(ctx, Manifest.permission.POST_NOTIFICATIONS)) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        if (needed.isNotEmpty()) permLauncher.launch(needed.toTypedArray()) else startBubble()
     }
 
     SettingsScaffold("Floating Bubble", onBack) {
@@ -74,11 +84,28 @@ fun FloatingBubbleScreen(onBack: () -> Unit) {
             "Display over other apps permission: " + if (granted) "diya gaya hai" else "nahi diya gaya",
             fontSize = 15.sp,
         )
+        Text(
+            "Mic permission (voice listening ke liye): " + if (micGranted) "diya gaya hai" else "nahi diya gaya",
+            fontSize = 15.sp,
+        )
+        Text(
+            "Bubble mic: " + when (voice) {
+                BubbleVoiceState.STOPPED -> "band"
+                BubbleVoiceState.LISTENING -> "sun rahi hai"
+                BubbleVoiceState.THINKING -> "soch rahi hai"
+                BubbleVoiceState.SPEAKING -> "bol rahi hai"
+            },
+            fontSize = 15.sp,
+        )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = ::enable, enabled = !running) { Text("Enable bubble") }
             OutlinedButton(onClick = { FloatingBubbleService.stop(ctx) }, enabled = running) { Text("Stop bubble") }
         }
+        OutlinedButton(
+            onClick = { FloatingBubbleService.stopListening(ctx) },
+            enabled = voice != BubbleVoiceState.STOPPED,
+        ) { Text("Stop listening") }
         note?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 14.sp) }
 
         HorizontalDivider()
@@ -86,10 +113,13 @@ fun FloatingBubbleScreen(onBack: () -> Unit) {
         Text(
             "- Doosre apps ke upar ek chhota \"M\" bubble dikhta hai. Ungli se khiskakar kahin bhi rakh sakte hain.\n" +
                 "- Bubble par tap karne se MAYA khulta hai. Mic apne aap shuru nahi hota.\n" +
-                "- Jab tak bubble ON hai, ek notification dikhti hai jisme \"Band karo\" button hai.\n" +
-                "- Bubble sirf apni chhoti si jagah banata hai. Yeh doosre apps ki screen nahi padhta aur koi naya data kahin nahi bhejta.\n" +
-                "- Bubble band karne ke liye yahan \"Stop bubble\" ya notification ka \"Band karo\" dabayein.\n" +
-                "- Android Settings mein \"Display over other apps\" ko aap khud ON karte hain. MAYA ise apne aap ON nahi kar sakti.",
+                "- Bubble ko ~0.5 second dabakar rakhein: mic shuru ho jata hai aur chhodne ke baad bhi chalta rehta hai. Dobara dabakar rakhein ya notification ka \"Stop Listening\" dabayein: mic band.\n" +
+                "- Bubble ka kinara hara = sun rahi hai, peela = soch rahi hai, jamuni = bol rahi hai.\n" +
+                "- Mic ON hone par Android ka hara mic indicator dikhta hai. MAYA ise chhupa nahi sakti.\n" +
+                "- Jo bhi mic sunta hai wo text banakar Gemini ko jata hai. Koi audio ya baat phone mein save nahi hoti.\n" +
+                "- Confirm wale kaam (call, message, typing) bubble se nahi chalte; unke liye MAYA app mein bolein.\n" +
+                "- Mic ke liye pehle mic permission dein, phir \"Enable bubble\". Permission baad mein di ho to \"Stop bubble\" aur dobara \"Enable bubble\" dabayein.\n" +
+                "- MAYA app screen par ho to bubble ka mic nahi chalta; app ka apna mic use hota hai.",
             fontSize = 14.sp,
         )
     }
@@ -118,3 +148,6 @@ fun FloatingBubbleScreen(onBack: () -> Unit) {
         )
     }
 }
+
+private fun hasPermission(ctx: android.content.Context, permission: String) =
+    ContextCompat.checkSelfPermission(ctx, permission) == PackageManager.PERMISSION_GRANTED
