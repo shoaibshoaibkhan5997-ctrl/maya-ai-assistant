@@ -5,6 +5,7 @@ enum class Screen(val title: String) {
     VOICE("Voice Settings"),
     API("Gemini API"),
     SCREEN_CONTROL("Screen Control"),
+    FLOATING("Floating Bubble"),
     PRIVACY("Permissions & Privacy"),
     ABOUT("About MAYA"),
 }
