@@ -14,6 +14,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.maya.ai.ui.Screen
 import com.maya.ai.ui.chat.ChatScreen
+import com.maya.ai.ui.floating.FloatingBubbleScreen
 import com.maya.ai.ui.screencontrol.ScreenControlScreen
 import com.maya.ai.ui.settings.AboutScreen
 import com.maya.ai.ui.settings.ApiSettingsScreen
@@ -43,6 +44,7 @@ class MainActivity : ComponentActivity() {
                     Screen.VOICE -> VoiceSettingsScreen(settingsVm, back)
                     Screen.API -> ApiSettingsScreen(settingsVm, back)
                     Screen.SCREEN_CONTROL -> ScreenControlScreen(settingsVm, back)
+                    Screen.FLOATING -> FloatingBubbleScreen(back)
                     Screen.PRIVACY -> PrivacyScreen(settingsVm, back)
                     Screen.ABOUT -> AboutScreen(back)
                 }
