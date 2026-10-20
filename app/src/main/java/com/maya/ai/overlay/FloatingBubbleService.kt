@@ -48,22 +48,27 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.vosk.Model
 import kotlin.math.hypot
 
 /** What the floating bubble's microphone is doing right now. */
-enum class BubbleVoiceState { STOPPED, LISTENING, THINKING, SPEAKING }
+enum class BubbleVoiceState { STOPPED, WAKE_WAITING, LISTENING, THINKING, SPEAKING }
 
 /**
- * Floating "M" bubble over other apps, plus an optional always-on voice session.
+ * Floating "M" bubble over other apps, plus an optional voice session.
  * - Tap: brings the existing MAYA screen to the front.
- * - Long press: starts listening; long press again (or the notification's Stop Listening) stops it.
- * Listening uses the existing SpeechRecognitionManager, Gemini, AppLauncher and speech output.
+ * - Long press: starts the session; long press again (or the notification's Stop Listening) stops it.
+ * Two session types, chosen by the "Hey Maya wake word" switch on the Floating Bubble screen:
+ *   OFF: continuous listening (previous behaviour).
+ *   ON : waits offline for "Hey Maya", then listens for one command, answers, and waits again.
  * It never reads other apps' screens and stores no audio or conversation on disk.
  */
 class FloatingBubbleService : Service() {
@@ -84,6 +89,7 @@ class FloatingBubbleService : Service() {
     @Volatile private var listening = false
     private var micTypeActive = false
     @Volatile private var heard: String? = null
+    private var wakeModel: Model? = null
     private val history = ArrayList<ChatTurn>()
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -130,6 +136,7 @@ class FloatingBubbleService : Service() {
         mainHandler.removeCallbacksAndMessages(null)
         removeBubble()
         speech.destroy()
+        closeWakeModel()
         scope.cancel()
         _running.value = false
         _voiceState.value = BubbleVoiceState.STOPPED
@@ -284,7 +291,7 @@ class FloatingBubbleService : Service() {
         try { startActivity(intent) } catch (_: Exception) { }
     }
 
-    // ---------- always-on listening ----------
+    // ---------- voice session (continuous or "Hey Maya") ----------
 
     private fun toggleListening() {
         if (listening) stopListening("Mic band kiya gaya.") else startListening()
@@ -292,11 +299,14 @@ class FloatingBubbleService : Service() {
 
     private fun startListening() {
         if (listening) return
+        val wakeMode = prefs.getBoolean(KEY_WAKE, false)
         val problem = when {
             appVisible -> "MAYA app khula hai. App ka apna mic button use karein."
             !hasMicPermission() -> "Mic permission nahi hai. MAYA kholkar Floating Bubble screen se permission dein."
             !micTypeActive -> "Mic ke liye bubble dobara Enable karein: MAYA kholkar Floating Bubble > Stop bubble, phir Enable."
             !maya.keys.configured.value -> "Gemini API key set nahi hai."
+            wakeMode && WakeModel.modelDir(this) == null ->
+                "\"Hey Maya\" ka model download nahi hua. MAYA kholkar Floating Bubble screen se model download karein."
             !speech.isAvailable() -> "Is phone par speech recognition service nahi mili."
             else -> null
         }
@@ -306,22 +316,115 @@ class FloatingBubbleService : Service() {
         }
         listening = true
         history.clear()
-        BubbleChatBus.post(BubbleChatBus.Kind.STATUS, "Bubble mic ON. Sun rahi hoon. Band karne ke liye bubble ko dobara dabakar rakhein.")
-        setState(BubbleVoiceState.LISTENING)
-        loopJob = scope.launch { runLoop() }
+        BubbleChatBus.post(
+            BubbleChatBus.Kind.STATUS,
+            if (wakeMode) {
+                "Bubble mic ON (\"Hey Maya\" mode). \"Hey Maya\" bolkar command dein. Band karne ke liye bubble ko dobara dabakar rakhein."
+            } else {
+                "Bubble mic ON. Sun rahi hoon. Band karne ke liye bubble ko dobara dabakar rakhein."
+            }
+        )
+        setState(if (wakeMode) BubbleVoiceState.WAKE_WAITING else BubbleVoiceState.LISTENING)
+        loopJob = scope.launch { if (wakeMode) runWakeLoop() else runLoop() }
     }
 
     /** Stops the microphone for good. Nothing restarts it until the user long-presses again. */
     private fun stopListening(note: String?) {
         val was = listening
         listening = false
-        loopJob?.cancel()
+        loopJob?.cancel()          // releases the wake-word detector's microphone first
         loopJob = null
         speech.cancel()
+        closeWakeModel()           // frees the model's memory
         if (was) maya.stopSpeech()
         setState(BubbleVoiceState.STOPPED)
         if (was && note != null) BubbleChatBus.post(BubbleChatBus.Kind.STATUS, note)
     }
+
+    private fun closeWakeModel() {
+        wakeModel?.let { try { it.close() } catch (_: Exception) { } }
+        wakeModel = null
+    }
+
+    // ----- "Hey Maya" mode -----
+
+    private suspend fun ensureWakeModel(): Model? {
+        wakeModel?.let { return it }
+        val dir = WakeModel.modelDir(this) ?: return null
+        val m = withContext(NonCancellable + Dispatchers.Default) {
+            try { Model(dir.absolutePath) } catch (e: Exception) { null }
+        } ?: return null
+        if (!listening) {              // stopped while the model was loading
+            try { m.close() } catch (_: Exception) { }
+            return null
+        }
+        wakeModel = m
+        return m
+    }
+
+    private suspend fun runWakeLoop() {
+        val model = ensureWakeModel()
+        if (model == null) {
+            if (listening) {
+                stopListening("\"Hey Maya\" model load nahi ho paya. Floating Bubble screen se model dobara download karein.")
+            }
+            return
+        }
+        val detector = WakeWordDetector(model)
+        var failed = 0
+        while (listening) {
+            waitIdle()                 // never listens for the wake word while MAYA speaks
+            if (!listening) return
+            setState(BubbleVoiceState.WAKE_WAITING)
+            when (val r = detector.awaitWake()) {
+                is WakeWordDetector.Result.Detected -> {
+                    failed = 0
+                    onWakeWord()
+                }
+                is WakeWordDetector.Result.Failed -> {
+                    failed++
+                    if (failed >= MAX_FAILED_ROUNDS) {
+                        stopListening("Mic band kiya gaya: ${r.message}")
+                        return
+                    }
+                    delay((failed * 1_000L).coerceAtMost(5_000L))
+                }
+            }
+        }
+    }
+
+    private suspend fun onWakeWord() {
+        bubble?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        setState(BubbleVoiceState.LISTENING)
+        BubbleChatBus.post(BubbleChatBus.Kind.STATUS, "\"Hey Maya\" suna. Boliye...")
+        delay(400)                     // let the wake-word detector release the microphone
+        val command = captureCommand()
+        if (!listening) return
+        if (command != null) {
+            handleHeard(command)
+        } else {
+            BubbleChatBus.post(BubbleChatBus.Kind.STATUS, "Koi command nahi suni. Wapas \"Hey Maya\" ka intezaar.")
+        }
+    }
+
+    /** One command through the existing recognizer, then the microphone is released again. */
+    private suspend fun captureCommand(): String? {
+        heard = null
+        speech.clearError()
+        speech.start(maya.prefs.settingsSnapshot().inputLang)
+        var waited = 0
+        while (listening && speech.state.value is SpeechRecognitionManager.State.Listening) {
+            delay(100)
+            waited += 100
+            if (waited == COMMAND_MAX_MS) speech.stop()
+            if (waited > COMMAND_MAX_MS + 5_000) { speech.cancel(); break }
+        }
+        val text = heard
+        heard = null
+        return text
+    }
+
+    // ----- continuous mode (previous behaviour) -----
 
     private suspend fun runLoop() {
         var failed = 0
@@ -387,6 +490,8 @@ class FloatingBubbleService : Service() {
             delay(100)
         }
     }
+
+    // ----- shared: heard text -> existing AI -> existing voice -----
 
     private suspend fun handleHeard(text: String) {
         setState(BubbleVoiceState.THINKING)
@@ -476,6 +581,7 @@ class FloatingBubbleService : Service() {
 
     private fun strokeFor(state: BubbleVoiceState): Int = when (state) {
         BubbleVoiceState.STOPPED -> 0xFF6CB4FF.toInt()
+        BubbleVoiceState.WAKE_WAITING -> 0xFF5EC8D8.toInt()
         BubbleVoiceState.LISTENING -> 0xFF3DDC97.toInt()
         BubbleVoiceState.THINKING -> 0xFFFFC857.toInt()
         BubbleVoiceState.SPEAKING -> 0xFFA99BFF.toInt()
@@ -543,6 +649,7 @@ class FloatingBubbleService : Service() {
         val state = _voiceState.value
         val (title, text) = when (state) {
             BubbleVoiceState.STOPPED -> "MAYA floating bubble ON" to "Mic band hai. Mic shuru karne ke liye bubble ko dabakar rakhein."
+            BubbleVoiceState.WAKE_WAITING -> "MAYA wake word ON" to "\"Hey Maya\" bolein..."
             BubbleVoiceState.LISTENING -> "MAYA mic ON" to "Sun rahi hoon..."
             BubbleVoiceState.THINKING -> "MAYA mic ON" to "MAYA soch rahi hai..."
             BubbleVoiceState.SPEAKING -> "MAYA mic ON" to "MAYA bol rahi hai..."
@@ -566,15 +673,18 @@ class FloatingBubbleService : Service() {
         private const val NOTIF_ID = 4101
         private const val ACTION_STOP = "com.maya.ai.overlay.STOP"
         private const val ACTION_STOP_LISTEN = "com.maya.ai.overlay.STOP_LISTEN"
-        private const val PREFS = "maya_bubble"
+        const val PREFS = "maya_bubble"
+        /** true = long press starts the "Hey Maya" wake-word session. */
+        const val KEY_WAKE = "wake_enabled"
         private const val KEY_X = "x"
         private const val KEY_Y = "y"
 
         private const val MAX_HISTORY = 12
         private const val MAX_LISTEN_MS = 60_000
+        private const val COMMAND_MAX_MS = 15_000
         private const val MAX_FAILED_ROUNDS = 5
         private const val QUIET_MS = 1_000
-        /** Battery safety net: stops after this long without hearing anything. 0 = never. */
+        /** Continuous mode only: stops after this long without hearing anything. 0 = never. */
         private const val AUTO_STOP_SILENT_MS = 30 * 60_000L
 
         private val _running = MutableStateFlow(false)
