@@ -15,6 +15,8 @@ import com.maya.ai.domain.AssistantCommand
 import com.maya.ai.domain.ChatTurn
 import com.maya.ai.domain.CommandParser
 import com.maya.ai.launcher.AppLauncher
+import com.maya.ai.selfimprove.SelfImprove
+import com.maya.ai.selfimprove.SelfImproveMatcher
 import com.maya.ai.overlay.BubbleChatBus
 import com.maya.ai.service.MayaAccessibilityService
 import com.maya.ai.speech.SpeechRecognitionManager
@@ -183,6 +185,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             input = ""
             messages.add(ChatMessage(Role.STATUS, launched.message, launched.success))
             if (!launched.success && settings.value.speakEnabled) speak(launched.message)
+            return
+        }
+                // "Maya, khud ko behtar banao" and similar: opens the Self Improve screen, never plain chat.
+        if (SelfImproveMatcher.matches(text)) {
+            speech.clearError()
+            stopSpeaking()
+            pendingPlan = null
+            messages.add(ChatMessage(Role.USER, text))
+            input = ""
+            messages.add(
+                ChatMessage(Role.STATUS, "Self Improve screen khol rahi hoon. Wahan analysis, patch aur aapki approval hogi.")
+            )
+            SelfImprove.requestOpen(text)
             return
         }
 
