@@ -15,11 +15,14 @@ import com.maya.ai.domain.ScrollDirection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
+/** What is on screen right before Send: best-effort chat name and the typed message. */
+data class SendContext(val app: String, val title: String?, val draft: String)
+
 /**
  * Executes ONLY the allowlisted [AssistantCommand] types, and only while the user has
  * turned Screen Control ON inside MAYA. It never sends screen contents anywhere; it only
  * looks at node structure locally to find a button, a list item or the focused input field.
- * Payment-like labels and bank/wallet apps are refused.
+ * Payment-like labels and bank/wallet apps are refused. Send is limited to messaging apps.
  */
 class MayaAccessibilityService : AccessibilityService() {
 
@@ -62,6 +65,7 @@ class MayaAccessibilityService : AccessibilityService() {
             is AssistantCommand.WhatsAppMessage -> MessagingActions.whatsApp(this, cmd.number, cmd.text)
             is AssistantCommand.SmsMessage -> MessagingActions.sms(this, cmd.number, cmd.text)
             is AssistantCommand.TypeText -> typeText(cmd.text)
+            is AssistantCommand.PressSend -> pressSend()
             else -> ActionResult(false, "Yeh command device action nahi hai.")
         }
     }
@@ -245,13 +249,16 @@ class MayaAccessibilityService : AccessibilityService() {
 
     private fun typeText(text: String): ActionResult {
         val root = rootInActiveWindow ?: return noScreen()
-        val field = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        if (field == null || !field.isEditable) {
-            return ActionResult(false, "Koi focused text box nahi mila. Pehle text box par tap karein.")
+        if (blockedScreen(root)) return blockedResult()
+        val field = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+            ?: dfsFirst(root) { it.isEditable && it.isVisibleToUser && !it.isPassword }
+        if (field == null) {
+            return ActionResult(false, "Screen par koi text box nahi mila.")
         }
         if (field.isPassword) {
             return ActionResult(false, "Password field mein MAYA text nahi likhti.")
         }
+        field.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         val existing = if (field.isShowingHintText) "" else field.text?.toString().orEmpty()
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, existing + text)
@@ -259,6 +266,70 @@ class MayaAccessibilityService : AccessibilityService() {
         return if (field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
             ActionResult(true, "Text text box mein likh diya gaya.")
         else ActionResult(false, "Yeh text box text set karne nahi deta.")
+    }
+
+    // ---------- send (messaging apps only) ----------
+
+    /**
+     * Reads, locally, what is about to be sent: the chat name (best effort, from the screen's
+     * top area) and the typed text. Returns null if the current app is not a messaging app.
+     */
+    fun readSendContext(): SendContext? {
+        val root = rootInActiveWindow ?: return null
+        val pkg = root.packageName?.toString().orEmpty()
+        if (pkg !in SEND_PACKAGES) return null
+        val field = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable && !it.isPassword }
+            ?: dfsFirst(root) { it.isEditable && it.isVisibleToUser && !it.isPassword }
+        val draft = if (field == null || field.isShowingHintText) "" else field.text?.toString().orEmpty().trim()
+        return SendContext(pkg, chatTitle(root), draft)
+    }
+
+    private fun chatTitle(root: AccessibilityNodeInfo): String? {
+        val limit = resources.displayMetrics.heightPixels * 0.2f
+        val candidates = collect(root) { n ->
+            val t = n.text?.toString()?.trim().orEmpty()
+            val r = Rect()
+            n.getBoundsInScreen(r)
+            n.isVisibleToUser && !n.isEditable && t.length in 2..40 && r.bottom <= limit &&
+                !TITLE_SKIP.matches(t)
+        }
+        val best = candidates.minWithOrNull(
+            compareBy<AccessibilityNodeInfo> { n -> Rect().also { n.getBoundsInScreen(it) }.top }
+                .thenBy { n -> Rect().also { n.getBoundsInScreen(it) }.left }
+        )
+        return best?.text?.toString()?.trim()
+    }
+
+    /** Presses the Send button, but only in a messaging app, never on a payment-looking screen. */
+    private fun pressSend(): ActionResult {
+        val root = rootInActiveWindow ?: return noScreen()
+        val pkg = root.packageName?.toString().orEmpty()
+        if (pkg !in SEND_PACKAGES) {
+            return ActionResult(false, "Send sirf WhatsApp, Messages ya Telegram jaise messaging apps mein chalta hai.")
+        }
+        if (blockedScreen(root)) return blockedResult()
+        if (dfsFirst(root) { it.isVisibleToUser && PAYMENT_SCREEN.containsMatchIn(labelOf(it)) } != null) {
+            return ActionResult(false, "Yeh screen payment jaisi lag rahi hai, isliye Send nahi dabaya.")
+        }
+        val ctx = readSendContext()
+        if (ctx == null || ctx.draft.isBlank()) {
+            return ActionResult(false, "Message box khaali hai, isliye Send nahi dabaya.")
+        }
+        val btn = dfsFirst(root) { n ->
+            n.isVisibleToUser && n.isEnabled && labelOf(n).trim().lowercase() in SEND_LABELS
+        } ?: return ActionResult(false, "Send button nahi mila.")
+        var n: AccessibilityNodeInfo? = btn
+        var depth = 0
+        while (n != null && depth < 4) {
+            if (n.isClickable && n.isEnabled) {
+                return if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                    ActionResult(true, "Send dabane ki request bheji gayi. Chat mein dekh lein ki message gaya.")
+                else ActionResult(false, "Send ka tap Android ne accept nahi kiya.")
+            }
+            n = n.parent
+            depth++
+        }
+        return ActionResult(false, "Send button tap karne layak nahi mila.")
     }
 
     // ---------- helpers ----------
@@ -321,6 +392,24 @@ class MayaAccessibilityService : AccessibilityService() {
             RegexOption.IGNORE_CASE
         )
         private val AD_LABEL = Regex("sponsored|\\bad\\b|advert", RegexOption.IGNORE_CASE)
+
+        /** Apps in which "Send" may be pressed (after the user's spoken confirmation). */
+        private val SEND_PACKAGES = setOf(
+            "com.whatsapp",
+            "com.whatsapp.w4b",
+            "com.google.android.apps.messaging",
+            "com.samsung.android.messaging",
+            "org.telegram.messenger",
+            "org.thoughtcrime.securesms",
+        )
+        private val SEND_LABELS = setOf("send", "send message", "भेजें", "भेजो", "भेजना")
+        private val PAYMENT_SCREEN = Regex(
+            "upi pin|enter amount|send money|payment (method|options)|bank account",
+            RegexOption.IGNORE_CASE
+        )
+        private val TITLE_SKIP = Regex(
+            "(?i)^(online|typing\\.*…?|last seen.*|tap here for contact info|click here for contact info|\\d+|whatsapp|messages|telegram)$"
+        )
 
         private val _connected = MutableStateFlow(false)
         /** True only while Android has the service enabled and bound. */
