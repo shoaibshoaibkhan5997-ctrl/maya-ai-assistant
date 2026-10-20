@@ -8,6 +8,7 @@ import com.maya.ai.security.ApiKeyManager
 import com.maya.ai.service.MayaAccessibilityService
 import com.maya.ai.speech.ElevenLabsVoice
 import com.maya.ai.speech.GeminiVoice
+import com.maya.ai.speech.SpeechText
 import com.maya.ai.speech.TextToSpeechManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,19 +56,24 @@ class MayaApp : Application() {
         }
     }
 
-    /** ElevenLabs if switched ON, else Gemini voice, with the phone's own voice as backup. */
+    /**
+     * ElevenLabs if switched ON, else Gemini voice, with the phone's own voice as backup.
+     * Emojis are removed first so they are never read out loud (the chat still shows them).
+     */
     fun speakText(text: String, s: MayaSettings) {
+        val spoken = SpeechText.clean(text)
+        if (spoken.isEmpty()) return
         if (s.useElevenLabs && elevenKeys.configured.value) {
             tts.stop(); geminiVoice.stop()
-            cloudVoice.speak(text, s.elevenVoiceId, s.volume)
+            cloudVoice.speak(spoken, s.elevenVoiceId, s.volume)
         } else if (keys.configured.value) {
             tts.stop(); cloudVoice.stop()
-            geminiVoice.speak(text, s.volume) {
-                tts.speak(text, s.speechRate, s.volume, s.voiceName)
+            geminiVoice.speak(spoken, s.volume) {
+                tts.speak(spoken, s.speechRate, s.volume, s.voiceName)
             }
         } else {
             cloudVoice.stop(); geminiVoice.stop()
-            tts.speak(text, s.speechRate, s.volume, s.voiceName)
+            tts.speak(spoken, s.speechRate, s.volume, s.voiceName)
         }
     }
 
