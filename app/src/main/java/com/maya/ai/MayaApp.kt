@@ -5,6 +5,7 @@ import com.maya.ai.data.GeminiRepository
 import com.maya.ai.data.MayaSettings
 import com.maya.ai.data.PreferencesRepository
 import com.maya.ai.security.ApiKeyManager
+import com.maya.ai.selfimprove.SelfImprove
 import com.maya.ai.service.MayaAccessibilityService
 import com.maya.ai.speech.ElevenLabsVoice
 import com.maya.ai.speech.GeminiVoice
@@ -41,6 +42,7 @@ class MayaApp : Application() {
         geminiVoice = GeminiVoice(this, keys)
         speaking = combine(tts.speaking, cloudVoice.speaking, geminiVoice.speaking) { a, b, c -> a || b || c }
             .stateIn(appScope, SharingStarted.Eagerly, false)
+        SelfImprove.init(this)
 
         // The service honours the in-app switch.
         appScope.launch {
@@ -95,6 +97,7 @@ class MayaApp : Application() {
         stopSpeech()
         keys.clear()
         elevenKeys.clear()
+        SelfImprove.clearAll()          // GitHub token, repo, improvement history
         appScope.launch { prefs.clearAll() }
     }
 }
