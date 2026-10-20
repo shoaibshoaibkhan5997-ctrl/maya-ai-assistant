@@ -67,9 +67,11 @@ enum class BubbleVoiceState { STOPPED, WAKE_WAITING, LISTENING, THINKING, SPEAKI
  * - Tap: brings the existing MAYA screen to the front.
  * - Long press: starts the session; long press again (or the notification's Stop Listening) stops it.
  * Two session types, chosen by the "Hey Maya wake word" switch on the Floating Bubble screen:
- *   OFF: continuous listening (previous behaviour).
+ *   OFF: continuous listening.
  *   ON : waits offline for "Hey Maya", then listens for one command, answers, and waits again.
- * It never reads other apps' screens and stores no audio or conversation on disk.
+ * Taps, typing and Send from the bubble always need a spoken "haan" first; Send needs its own,
+ * after MAYA has read out the chat name and the message.
+ * It never reads other apps' screens for Gemini and stores no audio or conversation on disk.
  */
 class FloatingBubbleService : Service() {
 
@@ -328,7 +330,7 @@ class FloatingBubbleService : Service() {
         loopJob = scope.launch { if (wakeMode) runWakeLoop() else runLoop() }
     }
 
-    /** Stops the microphone for good. Nothing restarts it until the user long-presses again. */
+    /** Stops the microphone for good (and any plan in progress). Nothing restarts it until the next long press. */
     private fun stopListening(note: String?) {
         val was = listening
         listening = false
@@ -407,7 +409,7 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    /** One command through the existing recognizer, then the microphone is released again. */
+    /** One command (or one yes/no answer) through the existing recognizer, then the mic is released. */
     private suspend fun captureCommand(): String? {
         heard = null
         speech.clearError()
@@ -424,7 +426,7 @@ class FloatingBubbleService : Service() {
         return text
     }
 
-    // ----- continuous mode (previous behaviour) -----
+    // ----- continuous mode -----
 
     private suspend fun runLoop() {
         var failed = 0
@@ -530,21 +532,104 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    /** Only single, non-confirmation actions run from the bubble; everything else needs the app. */
     private suspend fun runSimpleAction(cmd: AssistantCommand, s: MayaSettings) {
-        if (cmd.requiresConfirmation || cmd is AssistantCommand.Plan) {
-            val msg = "Yeh kaam confirm karke chalana padta hai. MAYA app kholkar bolein."
-            BubbleChatBus.post(BubbleChatBus.Kind.STATUS, msg, false)
-            say(msg, s)
-            return
-        }
         if (!s.screenControlEnabled || !MayaAccessibilityService.connected.value) {
             BubbleChatBus.post(BubbleChatBus.Kind.STATUS, "Screen Control OFF hai, isliye yeh action nahi chalaya.", false)
+            return
+        }
+        if (cmd.requiresConfirmation || cmd is AssistantCommand.Plan) {
+            runWithVoiceConfirm(cmd, s)
             return
         }
         val result = MayaAccessibilityService.instance?.execute(cmd)
             ?: ActionResult(false, "Accessibility service connected nahi hai.")
         BubbleChatBus.post(BubbleChatBus.Kind.STATUS, result.message, result.success)
+    }
+
+    /**
+     * Taps, typing and calls need a spoken "haan". Send is split out and asked again after the
+     * message has been typed, using the chat name and text actually read from the screen.
+     */
+    private suspend fun runWithVoiceConfirm(cmd: AssistantCommand, s: MayaSettings) {
+        if (!s.speakEnabled) {
+            BubbleChatBus.post(
+                BubbleChatBus.Kind.STATUS,
+                "Voice replies OFF hain, isliye bubble se confirm nahi ho sakta. MAYA app kholkar bolein.", false
+            )
+            return
+        }
+        val steps = if (cmd is AssistantCommand.Plan) cmd.steps else listOf(cmd)
+        val sendIdx = steps.indexOfFirst { it is AssistantCommand.PressSend }
+        val before = if (sendIdx >= 0) steps.subList(0, sendIdx) else steps
+
+        if (before.isNotEmpty()) {
+            val tail = if (sendIdx >= 0) " Send abhi nahi dabaungi, uske pehle dobara poochhungi." else ""
+            val prompt = "Main yeh karungi: " + before.joinToString(", phir ") { it.spoken() } + "." +
+                tail + " Theek hai? Haan ya nahi bolo."
+            if (!confirmByVoice(prompt, s)) {
+                cancelled(s)
+                return
+            }
+            val ok = BubbleActionRunner.run(before) { msg, good ->
+                BubbleChatBus.post(BubbleChatBus.Kind.STATUS, msg, good)
+            }
+            if (!ok) return
+        }
+
+        if (sendIdx >= 0) {
+            delay(800)                                 // let the chat screen settle
+            if (!listening) return
+            val info = MayaAccessibilityService.instance?.readSendContext()
+            if (info == null) {
+                BubbleChatBus.post(
+                    BubbleChatBus.Kind.STATUS,
+                    "Send sirf WhatsApp, Messages ya Telegram jaise apps ki chat screen par chalta hai.", false
+                )
+                return
+            }
+            if (info.draft.isBlank()) {
+                BubbleChatBus.post(BubbleChatBus.Kind.STATUS, "Message box khaali hai, isliye Send nahi dabaya.", false)
+                return
+            }
+            val who = info.title?.let { "Chat shayad $it ki hai." } ?: "Chat ka naam padh nahi paayi."
+            val shown = if (info.draft.length > 150) info.draft.take(150) + "..." else info.draft
+            val prompt = "$who Message hai: $shown. Bhej doon? Haan ya nahi bolo."
+            if (!confirmByVoice(prompt, s)) {
+                cancelled(s)
+                return
+            }
+            BubbleActionRunner.run(listOf(AssistantCommand.PressSend)) { msg, good ->
+                BubbleChatBus.post(BubbleChatBus.Kind.STATUS, msg, good)
+            }
+        }
+    }
+
+    private suspend fun cancelled(s: MayaSettings) {
+        BubbleChatBus.post(BubbleChatBus.Kind.STATUS, "Kuch nahi chalaya gaya.", false)
+        say("Theek hai, nahi karungi.", s)
+    }
+
+    /**
+     * Reads [prompt] aloud and waits for a clear spoken yes. Silence, an unclear answer or "nahi"
+     * all mean no. One retry is allowed for an unclear answer.
+     */
+    private suspend fun confirmByVoice(prompt: String, s: MayaSettings): Boolean {
+        BubbleChatBus.post(BubbleChatBus.Kind.MAYA, prompt)
+        var line = prompt
+        repeat(2) {
+            say(line, s)
+            waitIdle()                                  // wait until MAYA has finished speaking
+            if (!listening) return false
+            setState(BubbleVoiceState.LISTENING)
+            val answer = captureCommand()
+            if (!answer.isNullOrBlank()) BubbleChatBus.post(BubbleChatBus.Kind.USER, answer)
+            when (YesNoMatcher.decide(answer)) {
+                YesNoMatcher.Answer.YES -> return true
+                YesNoMatcher.Answer.NO -> return false
+                YesNoMatcher.Answer.UNCLEAR -> line = "Samajh nahi aaya. Sirf haan ya nahi bolo."
+            }
+        }
+        return false
     }
 
     private suspend fun sayMaya(text: String, s: MayaSettings) {
