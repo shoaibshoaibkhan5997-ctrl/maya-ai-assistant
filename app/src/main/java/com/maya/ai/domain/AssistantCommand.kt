@@ -23,6 +23,8 @@ sealed class AssistantCommand {
     data class Scroll(val direction: ScrollDirection) : AssistantCommand()
     data object NavigateBack : AssistantCommand()
     data class TypeText(val text: String) : AssistantCommand()
+    /** Presses Send in a messaging app. Always needs a separate, explicit user confirmation. */
+    data object PressSend : AssistantCommand()
     data class Plan(val steps: List<AssistantCommand>) : AssistantCommand()
     data object StopActions : AssistantCommand()
     data class Invalid(val reason: String) : AssistantCommand()
@@ -32,12 +34,12 @@ sealed class AssistantCommand {
         get() = this is OpenApp || this is SearchYoutube || this is SearchInApp ||
             this is TapText || this is TapFirstResult || this is Call ||
             this is WhatsAppMessage || this is SmsMessage || this is Scroll ||
-            this is NavigateBack || this is TypeText || this is Plan
+            this is NavigateBack || this is TypeText || this is PressSend || this is Plan
 
-    /** Tapping, typing, calling and messaging need an explicit user tap before running. */
+    /** Tapping, typing, sending, calling and messaging need an explicit user confirmation. */
     val requiresConfirmation: Boolean
         get() = when (this) {
-            is TypeText, is SearchInApp, is TapText, is TapFirstResult,
+            is TypeText, is SearchInApp, is TapText, is TapFirstResult, is PressSend,
             is Call, is WhatsAppMessage, is SmsMessage -> true
             is Plan -> steps.any { it.requiresConfirmation }
             else -> false
@@ -56,7 +58,26 @@ sealed class AssistantCommand {
         is Scroll -> "Scroll " + if (direction == ScrollDirection.DOWN) "neeche" else "upar"
         is NavigateBack -> "Back jao"
         is TypeText -> "Text likho: \"$text\""
+        is PressSend -> "Send dabao (message bhejo)"
         is Plan -> steps.joinToString(" -> ") { it.describe() }
+        else -> ""
+    }
+
+    /** First-person Hinglish used when MAYA reads the plan aloud for confirmation. */
+    fun spoken(): String = when (this) {
+        is OpenApp -> "$appName kholungi"
+        is SearchYoutube -> "YouTube par \"$query\" search karungi"
+        is SearchInApp -> "\"$query\" search karungi"
+        is TapText -> "\"$label\" dabaungi"
+        is TapFirstResult -> "pehla result kholungi"
+        is Call -> "$number ka dialer kholungi"
+        is WhatsAppMessage -> "$number ki WhatsApp chat message ke saath kholungi"
+        is SmsMessage -> "$number ka SMS message ke saath kholungi"
+        is Scroll -> "scroll " + if (direction == ScrollDirection.DOWN) "neeche karungi" else "upar karungi"
+        is NavigateBack -> "peeche jaungi"
+        is TypeText -> "\"$text\" likhungi"
+        is PressSend -> "Send dabaungi"
+        is Plan -> steps.joinToString(", phir ") { it.spoken() }
         else -> ""
     }
 }
