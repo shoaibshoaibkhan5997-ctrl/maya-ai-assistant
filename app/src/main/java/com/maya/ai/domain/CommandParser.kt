@@ -138,6 +138,8 @@ object CommandParser {
                 else AssistantCommand.TypeText(text)
             }
 
+            "PRESS_SEND" -> AssistantCommand.PressSend
+
             "PLAN" -> {
                 val arr = obj.optJSONArray("steps")
                 if (!allowPlan || arr == null || arr.length() == 0 || arr.length() > MAX_STEPS) {
@@ -155,6 +157,9 @@ object CommandParser {
                             step is AssistantCommand.SmsMessage
                         ) {
                             return AssistantCommand.Invalid("Call ya message ko dusre steps ke saath nahi chala sakte.")
+                        }
+                        if (step is AssistantCommand.PressSend && i != arr.length() - 1) {
+                            return AssistantCommand.Invalid("Send sabse aakhri step hona chahiye.")
                         }
                         steps.add(step)
                     }
