@@ -8,16 +8,20 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.maya.ai.overlay.FloatingBubbleService
+import com.maya.ai.selfimprove.SelfImprove
 import com.maya.ai.ui.Screen
 import com.maya.ai.ui.chat.ChatScreen
 import com.maya.ai.ui.floating.FloatingBubbleScreen
 import com.maya.ai.ui.home.HomeScreen
 import com.maya.ai.ui.screencontrol.ScreenControlScreen
+import com.maya.ai.ui.selfimprove.SelfImproveScreen
 import com.maya.ai.ui.settings.AboutScreen
 import com.maya.ai.ui.settings.ApiSettingsScreen
 import com.maya.ai.ui.settings.PrivacyScreen
@@ -45,6 +49,16 @@ class MainActivity : ComponentActivity() {
                     screen = if (screen == Screen.CHAT || origin == screen) Screen.HOME else origin
                     origin = Screen.HOME
                 }
+
+                // "Maya, khud ko behtar banao" typed or spoken in chat opens the Self Improve screen.
+                val openText by SelfImprove.openRequest.collectAsStateWithLifecycle()
+                LaunchedEffect(openText) {
+                    if (openText != null) {
+                        SelfImprove.consumeOpenRequest()
+                        if (screen != Screen.SELF_IMPROVE) { origin = screen; screen = Screen.SELF_IMPROVE }
+                    }
+                }
+
                 BackHandler(enabled = screen != Screen.HOME) { back() }
                 when (screen) {
                     Screen.HOME -> HomeScreen(chatVm, go)
@@ -53,6 +67,7 @@ class MainActivity : ComponentActivity() {
                     Screen.API -> ApiSettingsScreen(settingsVm, back)
                     Screen.SCREEN_CONTROL -> ScreenControlScreen(settingsVm, back)
                     Screen.FLOATING -> FloatingBubbleScreen(back)
+                    Screen.SELF_IMPROVE -> SelfImproveScreen(back)
                     Screen.PRIVACY -> PrivacyScreen(settingsVm, back)
                     Screen.ABOUT -> AboutScreen(back)
                 }
