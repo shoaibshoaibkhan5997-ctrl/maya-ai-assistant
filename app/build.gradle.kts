@@ -38,6 +38,9 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // Offline wake-word engine (Apache 2.0, no key). Its POM already brings JNA.
+    implementation("com.alphacephei:vosk-android:0.3.47")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }
