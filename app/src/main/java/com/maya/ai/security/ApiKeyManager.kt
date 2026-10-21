@@ -43,7 +43,7 @@ class ApiKeyManager(context: Context, slot: String = "gemini") {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(
                 Cipher.DECRYPT_MODE, secretKey(),
-                GCMParameterSpec(iv.size * 8, iv)
+                GCMParameterSpec(128, iv)
             )
             String(cipher.doFinal(Base64.decode(ctB64, Base64.NO_WRAP)), Charsets.UTF_8)
         } catch (e: Exception) {

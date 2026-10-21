@@ -784,7 +784,12 @@ class FloatingBubbleService : Service() {
         @Volatile var appVisible: Boolean = false
 
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, FloatingBubbleService::class.java))
+            val intent = Intent(context, FloatingBubbleService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
 
         fun stop(context: Context) {
