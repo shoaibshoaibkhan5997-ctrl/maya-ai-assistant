@@ -48,8 +48,12 @@ object AppLauncher {
         // Fallback: match by the name shown in the launcher (needs the <queries> in the manifest).
         val wanted = LABELS[target] ?: listOf(target.label)
         val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        @Suppress("DEPRECATION")
-        val match = pm.queryIntentActivities(launcher, 0).firstOrNull { ri ->
+        val match = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            pm.queryIntentActivities(launcher, android.content.pm.PackageManager.ResolveInfoFlags.of(0L))
+        } else {
+            @Suppress("DEPRECATION")
+            pm.queryIntentActivities(launcher, 0)
+        }.firstOrNull { ri ->
             val label = ri.loadLabel(pm).toString()
             wanted.any { it.equals(label, ignoreCase = true) }
         }

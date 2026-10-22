@@ -86,7 +86,8 @@ class GeminiRepository(
 
     private fun extractText(resp: String): String {
         try {
-            val json = JSONObject(resp)
+            val cleanResp = resp.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+            val json = JSONObject(cleanResp)
             val block = json.optJSONObject("promptFeedback")?.optString("blockReason", "").orEmpty()
             if (block.isNotEmpty()) throw GeminiException(
                 GeminiException.Kind.BLOCKED, "Gemini ne is request ko block kiya ($block)."
