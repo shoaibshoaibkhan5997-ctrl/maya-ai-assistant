@@ -67,6 +67,10 @@ class WakeWordDetector(private val model: Model) {
             }
         } catch (e: Exception) {
             finish(Result.Failed(e.message ?: "Wake-word detector shuru nahi ho paya."))
+        } finally {
+            if (closed.get()) {
+                release()
+            }
         }
     }
 
