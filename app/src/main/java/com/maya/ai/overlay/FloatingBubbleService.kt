@@ -301,6 +301,7 @@ class FloatingBubbleService : Service() {
 
     private fun startListening() {
         if (listening) return
+        speech.cancel()
         val wakeMode = prefs.getBoolean(KEY_WAKE, false)
         val problem = when {
             appVisible -> "MAYA app khula hai. App ka apna mic button use karein."
